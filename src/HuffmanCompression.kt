@@ -1,11 +1,9 @@
 import java.io.BufferedOutputStream
-import java.io.BufferedReader
+import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.FileOutputStream
-import java.nio.file.Path
 import java.util.PriorityQueue
-import java.util.Queue
 import kotlin.math.round
 
 class HuffmanCompression: CompressionEngine {
@@ -50,9 +48,15 @@ class HuffmanCompression: CompressionEngine {
         saveMappingFile(mapping)
         val mappingFile = File("mapping.huff")
 
+        println("Saving frequency table...")
+        println("")
+        // Save Freq Table
+        val freqFile = File("decompress.huff")
+        saveFrequencyTable(usageMap, freqFile)
+
         println("Compressing File...")
         println("")
-        compressFile(file, treeRoot, mapping)
+        compressFile(file, mapping)
 
         println("Compression Finished")
         println("")
@@ -70,6 +74,7 @@ class HuffmanCompression: CompressionEngine {
         println("Starting File Path: ${file.absolutePath}")
         println("Compressed File Path: ${compressedFile.absolutePath}")
         println("Mapping File Path: ${mappingFile.absolutePath}")
+        println("Frequency Table File Path: ${freqFile.absolutePath}")
         println("================================================================")
     }
 
@@ -81,22 +86,18 @@ class HuffmanCompression: CompressionEngine {
         return (round(rawChange * 100) / 100)  // rounds to 2 decimal places
     }
 
-    private fun compressFile(file: File, root: Node, mapping: Map<Char, String>)  {
-        val reader = file.bufferedReader()
-        val output = DataOutputStream(BufferedOutputStream(FileOutputStream("compressed.huff")))
-        val bitBuffer = StringBuilder()
+    private fun compressFile(file: File, mapping: Map<Char, String>)  {
+        val output = FileOutputStream("compressed.huff")
+        val dataOutput = DataOutputStream(output)
 
-        reader.forEachLine { line ->
-            line.forEach { bitBuffer.append(mapping[it]) }
-        }
+        val encodedBinaryString = file.readText().map { mapping[it] }.joinToString("")
 
-        val encodedBinary = bitBuffer.toString()
-//        output.writeInt(encodedBinary.length)
-        output.write(binaryStringToByteArray(encodedBinary))
+        val compressedBytes = binaryStringToByteArray(encodedBinaryString)
+        dataOutput.writeInt(encodedBinaryString.length) // store the number of bits (not just bytes)
+        dataOutput.write(compressedBytes)
 
-        reader.close()
-        output.flush()
-        output.close()
+        dataOutput.flush()
+        dataOutput.close()
     }
 
     private fun binaryStringToByteArray(binary: String): ByteArray {
@@ -118,12 +119,26 @@ class HuffmanCompression: CompressionEngine {
         writer.close()
     }
 
+    private fun saveFrequencyTable(freqMap: Map<Char, Int>, file: File) {
+        val out = DataOutputStream(BufferedOutputStream(FileOutputStream(file)))
+
+        out.writeInt(freqMap.size) // number of entries
+        for ((char, freq) in freqMap) {
+            out.writeChar(char.code) // save char
+            out.writeInt(freq)       // save frequency
+        }
+
+        out.flush()
+        out.close()
+    }
+
+
     private fun printTree(root: Node, prefix: String = "", codes: MutableMap<Char, String> = mutableMapOf()): Map<Char, String> {
         if(root.character == null) {
             printTree(root.left!!, prefix + "0", codes)
             printTree(root.right!!, prefix + "1", codes)
         } else {
-            codes[root.character!!] = prefix
+            codes[root.character] = prefix
         }
         return codes
     }
@@ -166,14 +181,117 @@ class HuffmanCompression: CompressionEngine {
             return m.toMap()
 
         } catch (e: Exception) {
-            println("Exception thrown while building usage map.")
+            println("Exception thrown while building usage map. $e")
             return mapOf<Char,Int>()
         }
 
     }
 
     override fun decompress(path: String, map: Any?) {
-        // TODO
+        // Get File
+        println("Fetching File...")
+
+        val file = getFile(path)
+        if (file == null) {
+            println("File found null. Cannot decompress...")
+            return
+        }
+        val startingSize = file.length()
+        println("Starting File Size: ${startingSize} bytes")
+        println("")
+
+        println("Fetching Decompression Key...")
+        val freqFile = getFile(map as String)
+        if (freqFile == null) {
+            println("Decompress Key found null. Cannot decompress...")
+            return
+        }
+
+        val input = DataInputStream(freqFile.inputStream().buffered())
+        val freqMap = readFrequencyTable(input)
+
+        // Build Freq Queue
+        val pq = buildFreqQueue(freqMap)
+
+        println("Building Huffman Tree...")
+        println("")
+        // Build Huffman Tree
+        val treeRoot = buildHuffTree(pq)
+
+        println("Tree build success...")
+        println("")
+
+
+        println("Decompressing File...")
+        println("")
+        decompressFile(file, treeRoot)
+
+        println("Decompression Finished")
+        println("")
+        val decompressedFile = File("decompressed.txt")
+        val endSize = decompressedFile.length()
+        println("Compressed File Size: ${endSize} bytes")
+
+        println("")
+        println("================================================================")
+        println("File: ${file.name}")
+        println("Starting Size: ${startingSize} bytes")
+        println("Compressed Size: ${endSize} bytes")
+        println("File size change of ${percentageChange(startingSize, endSize)}%")
+        println("================================================================")
+        println("Starting File Path: ${file.absolutePath}")
+        println("Decompressed File Path: ${decompressedFile.absolutePath}")
+        println("================================================================")
+
+    }
+
+    private fun decompressFile(file: File, root: Node ) {
+        val decompressedFile = File("decompressed.txt")
+        DataInputStream(file.inputStream().buffered()).use { input ->
+            val bitLength = input.readInt()
+
+            val encodedBytes = input.readBytes()
+
+            val bitString = encodedBytes.joinToString("") { byte ->
+                byte.toInt().and(0xFF).toString(2).padStart(8, '0')
+            }.take(bitLength) // remove padding bits
+
+            val decoded = StringBuilder()
+            var node: Node = root
+
+            for (bit in bitString) {
+                node = when {
+                    bit == '0' && node.character == null -> node.left
+                    bit == '1' && node.character == null -> node.right
+                    else -> node
+                }!!
+
+                if (node.character != null) {
+                    decoded.append(node.character)
+                    node = root // reset to root after each char
+                }
+            }
+
+            decompressedFile.bufferedWriter().use { writer ->
+                writer.write(decoded.toString())
+                writer.close()
+            }
+
+            input.close()
+        }
+    }
+
+    private fun readFrequencyTable(input: DataInputStream): Map<Char, Int> {
+        val freqMap = mutableMapOf<Char, Int>()
+        val size = input.readInt() // number of entries
+
+        repeat(size) {
+            val char = input.readChar()
+            val freq = input.readInt()
+            freqMap[char] = freq
+        }
+
+        return freqMap
     }
 
     private fun getFile(path: String): File? {

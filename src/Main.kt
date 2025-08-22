@@ -7,5 +7,9 @@ fun main() {
     val fileAbsPath = "/path/to/file.txt"
 
     compressionEngine.compress(fileAbsPath)
+
+    val compressedAbsPath = "/path/to/file.huff"
+    val mappingAbsPath = "/path/to/file.huff"
+    compressionEngine.decompress(compressedAbsPath, mappingAbsPath)
 }
 
