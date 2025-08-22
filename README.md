@@ -5,4 +5,4 @@ This is a small repo for me to learning about data compression by build basic ve
 The following compression algorithms are implemented:
 | Algorithm | Status |
 | --------- | ------ |
-| Huffman | Compression: Implemented - Decompression: Not Implemented |
+| Huffman | Fully Implemented |
